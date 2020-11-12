@@ -1,4 +1,6 @@
-// Copyright 2015 The Rust Project Developers.
+// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 // http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -9,13 +11,13 @@
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::net::{self, Ipv4Addr, Ipv6Addr, Shutdown};
-#[cfg(all(feature = "all", unix))]
+#[cfg(all(unix, feature = "unix"))]
 use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
 use std::time::Duration;
 
-#[cfg(all(unix, feature = "all", not(target_os = "redox")))]
+#[cfg(any(unix, target_os = "redox"))]
 use libc::MSG_OOB;
-#[cfg(all(windows, feature = "all"))]
+#[cfg(windows)]
 use winapi::um::winsock2::MSG_OOB;
 
 use crate::sys;
@@ -33,23 +35,18 @@ use crate::{Domain, Protocol, SockAddr, Type};
 /// # Examples
 ///
 /// ```no_run
-/// # fn main() -> std::io::Result<()> {
 /// use std::net::SocketAddr;
-/// use socket2::{Socket, Domain, Type};
+/// use socket2::{Socket, Domain, Type, SockAddr};
 ///
 /// // create a TCP listener bound to two addresses
-/// let socket = Socket::new(Domain::IPV4, Type::STREAM, None)?;
+/// let socket = Socket::new(Domain::ipv4(), Type::stream(), None).unwrap();
 ///
-/// let address: SocketAddr = "[::1]:12345".parse().unwrap();
-/// let address = address.into();
-/// socket.bind(&address)?;
-/// socket.bind(&address)?;
-/// socket.listen(128)?;
+/// socket.bind(&"127.0.0.1:12345".parse::<SocketAddr>().unwrap().into()).unwrap();
+/// socket.bind(&"127.0.0.1:12346".parse::<SocketAddr>().unwrap().into()).unwrap();
+/// socket.listen(128).unwrap();
 ///
 /// let listener = socket.into_tcp_listener();
 /// // ...
-/// # drop(listener);
-/// # Ok(()) }
 /// ```
 pub struct Socket {
     // The `sys` module most have access to the socket.
@@ -73,8 +70,9 @@ impl Socket {
     ///
     /// This function corresponds to `socketpair(2)`.
     ///
-    /// This function is only available on Unix.
-    #[cfg(all(feature = "all", unix))]
+    /// This function is only available on Unix when the `pair` feature is
+    /// enabled.
+    #[cfg(all(unix, feature = "pair"))]
     pub fn pair(
         domain: Domain,
         type_: Type,
@@ -102,24 +100,27 @@ impl Socket {
 
     /// Consumes this `Socket`, converting it into a `UnixStream`.
     ///
-    /// This function is only available on Unix.
-    #[cfg(all(feature = "all", unix))]
+    /// This function is only available on Unix when the `unix` feature is
+    /// enabled.
+    #[cfg(all(unix, feature = "unix"))]
     pub fn into_unix_stream(self) -> UnixStream {
         self.into()
     }
 
     /// Consumes this `Socket`, converting it into a `UnixListener`.
     ///
-    /// This function is only available on Unix.
-    #[cfg(all(feature = "all", unix))]
+    /// This function is only available on Unix when the `unix` feature is
+    /// enabled.
+    #[cfg(all(unix, feature = "unix"))]
     pub fn into_unix_listener(self) -> UnixListener {
         self.into()
     }
 
     /// Consumes this `Socket`, converting it into a `UnixDatagram`.
     ///
-    /// This function is only available on Unix.
-    #[cfg(all(feature = "all", unix))]
+    /// This function is only available on Unix when the `unix` feature is
+    /// enabled.
+    #[cfg(all(unix, feature = "unix"))]
     pub fn into_unix_datagram(self) -> UnixDatagram {
         self.into()
     }
@@ -260,7 +261,6 @@ impl Socket {
     ///
     /// [`recv`]: #method.recv
     /// [`out_of_band_inline`]: #method.out_of_band_inline
-    #[cfg(all(feature = "all", not(target_os = "redox")))]
     pub fn recv_out_of_band(&self, buf: &mut [u8]) -> io::Result<usize> {
         self.inner.recv(buf, MSG_OOB)
     }
@@ -329,7 +329,6 @@ impl Socket {
     ///
     /// [`send`]: #method.send
     /// [`out_of_band_inline`]: #method.out_of_band_inline
-    #[cfg(all(feature = "all", not(target_os = "redox")))]
     pub fn send_out_of_band(&self, buf: &[u8]) -> io::Result<usize> {
         self.inner.send(buf, MSG_OOB)
     }
@@ -721,7 +720,6 @@ impl Socket {
     /// For more information about this option, see [`set_out_of_band_inline`][link].
     ///
     /// [link]: #method.set_out_of_band_inline
-    #[cfg(all(feature = "all", not(target_os = "redox")))]
     pub fn out_of_band_inline(&self) -> io::Result<bool> {
         self.inner.out_of_band_inline()
     }
@@ -732,17 +730,18 @@ impl Socket {
     ///
     /// If this flag is not set, the `MSG_OOB` flag is needed
     /// while `recv`ing to aquire the out-of-band data.
-    #[cfg(all(feature = "all", not(target_os = "redox")))]
     pub fn set_out_of_band_inline(&self, oob_inline: bool) -> io::Result<()> {
         self.inner.set_out_of_band_inline(oob_inline)
     }
 
     /// Check the value of the `SO_REUSEPORT` option on this socket.
     ///
-    /// This function is only available on Unix.
+    /// This function is only available on Unix when the `reuseport` feature is
+    /// enabled.
     #[cfg(all(
-        feature = "all",
-        not(any(windows, target_os = "solaris", target_os = "illumos"))
+        unix,
+        not(any(target_os = "solaris", target_os = "illumos")),
+        feature = "reuseport"
     ))]
     pub fn reuse_port(&self) -> io::Result<bool> {
         self.inner.reuse_port()
@@ -754,10 +753,12 @@ impl Socket {
     /// addresses. For IPv4 sockets this means that a socket may bind even when
     /// there's a socket already listening on this port.
     ///
-    /// This function is only available on Unix.
+    /// This function is only available on Unix when the `reuseport` feature is
+    /// enabled.
     #[cfg(all(
-        feature = "all",
-        not(any(windows, target_os = "solaris", target_os = "illumos"))
+        unix,
+        not(any(target_os = "solaris", target_os = "illumos")),
+        feature = "reuseport"
     ))]
     pub fn set_reuse_port(&self, reuse: bool) -> io::Result<()> {
         self.inner.set_reuse_port(reuse)
@@ -797,7 +798,7 @@ impl<'a> Write for &'a Socket {
 }
 
 impl fmt::Debug for Socket {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.inner.fmt(f)
     }
 }
@@ -826,7 +827,7 @@ impl From<net::UdpSocket> for Socket {
     }
 }
 
-#[cfg(all(feature = "all", unix))]
+#[cfg(all(unix, feature = "unix"))]
 impl From<UnixStream> for Socket {
     fn from(socket: UnixStream) -> Socket {
         Socket {
@@ -835,7 +836,7 @@ impl From<UnixStream> for Socket {
     }
 }
 
-#[cfg(all(feature = "all", unix))]
+#[cfg(all(unix, feature = "unix"))]
 impl From<UnixListener> for Socket {
     fn from(socket: UnixListener) -> Socket {
         Socket {
@@ -844,7 +845,7 @@ impl From<UnixListener> for Socket {
     }
 }
 
-#[cfg(all(feature = "all", unix))]
+#[cfg(all(unix, feature = "unix"))]
 impl From<UnixDatagram> for Socket {
     fn from(socket: UnixDatagram) -> Socket {
         Socket {
@@ -871,21 +872,21 @@ impl From<Socket> for net::UdpSocket {
     }
 }
 
-#[cfg(all(feature = "all", unix))]
+#[cfg(all(unix, feature = "unix"))]
 impl From<Socket> for UnixStream {
     fn from(socket: Socket) -> UnixStream {
         socket.inner.into()
     }
 }
 
-#[cfg(all(feature = "all", unix))]
+#[cfg(all(unix, feature = "unix"))]
 impl From<Socket> for UnixListener {
     fn from(socket: Socket) -> UnixListener {
         socket.inner.into()
     }
 }
 
-#[cfg(all(feature = "all", unix))]
+#[cfg(all(unix, feature = "unix"))]
 impl From<Socket> for UnixDatagram {
     fn from(socket: Socket) -> UnixDatagram {
         socket.inner.into()
@@ -903,7 +904,7 @@ mod test {
         // this IP is unroutable, so connections should always time out
         let addr = "10.255.255.1:80".parse::<SocketAddr>().unwrap().into();
 
-        let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        let socket = Socket::new(Domain::ipv4(), Type::stream(), None).unwrap();
         match socket.connect_timeout(&addr, Duration::from_millis(250)) {
             Ok(_) => panic!("unexpected success"),
             Err(ref e) if e.kind() == io::ErrorKind::TimedOut => {}
@@ -914,13 +915,13 @@ mod test {
     #[test]
     fn connect_timeout_unbound() {
         // bind and drop a socket to track down a "probably unassigned" port
-        let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        let socket = Socket::new(Domain::ipv4(), Type::stream(), None).unwrap();
         let addr = "127.0.0.1:0".parse::<SocketAddr>().unwrap().into();
         socket.bind(&addr).unwrap();
         let addr = socket.local_addr().unwrap();
         drop(socket);
 
-        let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        let socket = Socket::new(Domain::ipv4(), Type::stream(), None).unwrap();
         match socket.connect_timeout(&addr, Duration::from_millis(250)) {
             Ok(_) => panic!("unexpected success"),
             Err(ref e)
@@ -932,7 +933,7 @@ mod test {
 
     #[test]
     fn connect_timeout_valid() {
-        let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        let socket = Socket::new(Domain::ipv4(), Type::stream(), None).unwrap();
         socket
             .bind(&"127.0.0.1:0".parse::<SocketAddr>().unwrap().into())
             .unwrap();
@@ -940,16 +941,16 @@ mod test {
 
         let addr = socket.local_addr().unwrap();
 
-        let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        let socket = Socket::new(Domain::ipv4(), Type::stream(), None).unwrap();
         socket
             .connect_timeout(&addr, Duration::from_millis(250))
             .unwrap();
     }
 
     #[test]
-    #[cfg(all(feature = "all", unix))]
+    #[cfg(all(unix, feature = "pair", feature = "unix"))]
     fn pair() {
-        let (mut a, mut b) = Socket::pair(Domain::UNIX, Type::STREAM, None).unwrap();
+        let (mut a, mut b) = Socket::pair(Domain::unix(), Type::stream(), None).unwrap();
         a.write_all(b"hello world").unwrap();
         let mut buf = [0; 11];
         b.read_exact(&mut buf).unwrap();
@@ -957,18 +958,18 @@ mod test {
     }
 
     #[test]
-    #[cfg(all(feature = "all", unix))]
+    #[cfg(all(unix, feature = "unix"))]
     fn unix() {
         use tempdir::TempDir;
 
         let dir = TempDir::new("unix").unwrap();
         let addr = SockAddr::unix(dir.path().join("sock")).unwrap();
 
-        let listener = Socket::new(Domain::UNIX, Type::STREAM, None).unwrap();
+        let listener = Socket::new(Domain::unix(), Type::stream(), None).unwrap();
         listener.bind(&addr).unwrap();
         listener.listen(10).unwrap();
 
-        let mut a = Socket::new(Domain::UNIX, Type::STREAM, None).unwrap();
+        let mut a = Socket::new(Domain::unix(), Type::stream(), None).unwrap();
         a.connect(&addr).unwrap();
 
         let mut b = listener.accept().unwrap().0;
@@ -981,7 +982,7 @@ mod test {
 
     #[test]
     fn keepalive() {
-        let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        let socket = Socket::new(Domain::ipv4(), Type::stream(), None).unwrap();
         socket.set_keepalive(Some(Duration::from_secs(7))).unwrap();
         // socket.keepalive() doesn't work on Windows #24
         #[cfg(unix)]
@@ -993,7 +994,7 @@ mod test {
 
     #[test]
     fn nodelay() {
-        let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        let socket = Socket::new(Domain::ipv4(), Type::stream(), None).unwrap();
 
         assert!(socket.set_nodelay(true).is_ok());
 
@@ -1004,9 +1005,8 @@ mod test {
     }
 
     #[test]
-    #[cfg(all(feature = "all", not(target_os = "redox")))]
     fn out_of_band_inline() {
-        let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        let socket = Socket::new(Domain::ipv4(), Type::stream(), None).unwrap();
 
         assert_eq!(socket.out_of_band_inline().unwrap(), false);
 
@@ -1015,15 +1015,15 @@ mod test {
     }
 
     #[test]
-    #[cfg(all(feature = "all", any(target_os = "windows", target_os = "linux")))]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     fn out_of_band_send_recv() {
-        let s1 = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        let s1 = Socket::new(Domain::ipv4(), Type::stream(), None).unwrap();
         s1.bind(&"127.0.0.1:0".parse::<SocketAddr>().unwrap().into())
             .unwrap();
         let s1_addr = s1.local_addr().unwrap();
         s1.listen(1).unwrap();
 
-        let s2 = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        let s2 = Socket::new(Domain::ipv4(), Type::stream(), None).unwrap();
         s2.connect(&s1_addr).unwrap();
 
         let (s3, _) = s1.accept().unwrap();
@@ -1041,13 +1041,13 @@ mod test {
 
     #[test]
     fn tcp() {
-        let s1 = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        let s1 = Socket::new(Domain::ipv4(), Type::stream(), None).unwrap();
         s1.bind(&"127.0.0.1:0".parse::<SocketAddr>().unwrap().into())
             .unwrap();
         let s1_addr = s1.local_addr().unwrap();
         s1.listen(1).unwrap();
 
-        let s2 = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        let s2 = Socket::new(Domain::ipv4(), Type::stream(), None).unwrap();
         s2.connect(&s1_addr).unwrap();
 
         let (s3, _) = s1.accept().unwrap();

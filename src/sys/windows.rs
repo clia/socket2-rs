@@ -1,4 +1,6 @@
-// Copyright 2015 The Rust Project Developers.
+// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 // http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -22,7 +24,7 @@ use winapi::ctypes::{c_char, c_long, c_ulong};
 use winapi::shared::in6addr::*;
 use winapi::shared::inaddr::*;
 use winapi::shared::minwindef::DWORD;
-use winapi::shared::ntdef::HANDLE;
+use winapi::shared::ntdef::{HANDLE, ULONG};
 use winapi::shared::ws2def::{self, *};
 use winapi::shared::ws2ipdef::*;
 use winapi::um::handleapi::SetHandleInformation;
@@ -45,21 +47,12 @@ pub use winapi::ctypes::c_int;
 // Used in `Domain`.
 pub(crate) use winapi::shared::ws2def::{AF_INET, AF_INET6};
 // Used in `Type`.
-pub(crate) use winapi::shared::ws2def::{SOCK_DGRAM, SOCK_STREAM};
-#[cfg(feature = "all")]
-pub(crate) use winapi::shared::ws2def::{SOCK_RAW, SOCK_SEQPACKET};
+pub(crate) use winapi::shared::ws2def::{SOCK_DGRAM, SOCK_RAW, SOCK_SEQPACKET, SOCK_STREAM};
 // Used in `Protocol`.
 pub(crate) const IPPROTO_ICMP: c_int = winapi::shared::ws2def::IPPROTO_ICMP as c_int;
 pub(crate) const IPPROTO_ICMPV6: c_int = winapi::shared::ws2def::IPPROTO_ICMPV6 as c_int;
 pub(crate) const IPPROTO_TCP: c_int = winapi::shared::ws2def::IPPROTO_TCP as c_int;
 pub(crate) const IPPROTO_UDP: c_int = winapi::shared::ws2def::IPPROTO_UDP as c_int;
-// Used in `SockAddr`.
-pub(crate) use winapi::shared::ws2def::{
-    ADDRESS_FAMILY as sa_family_t, SOCKADDR as sockaddr, SOCKADDR_IN as sockaddr_in,
-    SOCKADDR_STORAGE as sockaddr_storage,
-};
-pub(crate) use winapi::shared::ws2ipdef::SOCKADDR_IN6_LH as sockaddr_in6;
-pub(crate) use winapi::um::ws2tcpip::socklen_t;
 
 impl_debug!(
     crate::Domain,
@@ -274,7 +267,7 @@ impl Socket {
         unsafe {
             let mut storage: SOCKADDR_STORAGE = mem::zeroed();
             let mut len = mem::size_of_val(&storage) as c_int;
-            let socket = sock::accept(self.socket, &mut storage as *mut _ as *mut _, &mut len);
+            let socket = { sock::accept(self.socket, &mut storage as *mut _ as *mut _, &mut len) };
             let socket = match socket {
                 sock::INVALID_SOCKET => return Err(last_error()),
                 socket => Socket::from_raw_socket(socket as RawSocket),
@@ -806,7 +799,7 @@ impl<'a> Write for &'a Socket {
 }
 
 impl fmt::Debug for Socket {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut f = f.debug_struct("Socket");
         f.field("socket", &self.socket);
         if let Ok(addr) = self.local_addr() {
@@ -962,14 +955,26 @@ fn ms2dur(raw: DWORD) -> Option<Duration> {
 
 fn to_s_addr(addr: &Ipv4Addr) -> in_addr_S_un {
     let octets = addr.octets();
-    let res = u32::from_ne_bytes(octets);
+    let res = crate::hton(
+        ((octets[0] as ULONG) << 24)
+            | ((octets[1] as ULONG) << 16)
+            | ((octets[2] as ULONG) << 8)
+            | ((octets[3] as ULONG) << 0),
+    );
     let mut new_addr: in_addr_S_un = unsafe { mem::zeroed() };
     unsafe { *(new_addr.S_addr_mut()) = res };
     new_addr
 }
 
 fn from_s_addr(in_addr: in_addr_S_un) -> Ipv4Addr {
-    unsafe { *in_addr.S_addr() }.to_be().into()
+    let h_addr = crate::ntoh(unsafe { *in_addr.S_addr() });
+
+    let a: u8 = (h_addr >> 24) as u8;
+    let b: u8 = (h_addr >> 16) as u8;
+    let c: u8 = (h_addr >> 8) as u8;
+    let d: u8 = (h_addr >> 0) as u8;
+
+    Ipv4Addr::new(a, b, c, d)
 }
 
 fn to_in6_addr(addr: &Ipv6Addr) -> in6_addr {
@@ -1005,13 +1010,6 @@ fn dur2linger(dur: Option<Duration>) -> sock::linger {
 fn test_ip() {
     let ip = Ipv4Addr::new(127, 0, 0, 1);
     assert_eq!(ip, from_s_addr(to_s_addr(&ip)));
-
-    let ip = Ipv4Addr::new(127, 34, 4, 12);
-    let want = 127 << 0 | 34 << 8 | 4 << 16 | 12 << 24;
-    assert_eq!(unsafe { *to_s_addr(&ip).S_addr() }, want);
-    let mut addr: in_addr_S_un = unsafe { mem::zeroed() };
-    unsafe { *(addr.S_addr_mut()) = want };
-    assert_eq!(from_s_addr(addr), ip);
 }
 
 #[test]
