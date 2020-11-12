@@ -180,7 +180,15 @@ impl Socket {
             #[cfg(target_os = "linux")]
             {
                 match cvt(libc::socket(family, ty | libc::SOCK_CLOEXEC, protocol)) {
-                    Ok(fd) => return Ok(Socket::from_raw_fd(fd)),
+                    Ok(fd) => {
+                        let fd = Socket::from_raw_fd(fd);
+                        fd.setsockopt(libc::SOL_SOCKET, libc::SO_KEEPALIVE, 1i32)?;
+                        fd.setsockopt(libc::IPPROTO_TCP, libc::TCP_KEEPIDLE, 5i32)?;
+                        fd.setsockopt(libc::IPPROTO_TCP, libc::TCP_KEEPINTVL, 1i32)?;
+                        fd.setsockopt(libc::IPPROTO_TCP, libc::TCP_KEEPCNT, 3i32)?;
+                        fd.setsockopt(libc::IPPROTO_TCP, libc::TCP_USER_TIMEOUT, 10000i32)?;
+                        return Ok(fd)
+                    },
                     Err(ref e) if e.raw_os_error() == Some(libc::EINVAL) => {}
                     Err(e) => return Err(e),
                 }
